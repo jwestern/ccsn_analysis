@@ -1,0 +1,127 @@
+import pickle
+from numpy import *
+from scipy.signal import spectrogram
+
+#Define parameters
+execfile('./pars_velocity.py')
+
+#Load in data
+t        = pickle.load(open('./'+datadir+      '/tt.dic','rb'))
+rr       = pickle.load(open('./'+datadir+      '/rr.dic','rb'))*1e-5
+theta    = pickle.load(open('./'+datadir+   '/theta.dic','rb'))
+velr     = pickle.load(open('./'+datadir+    '/velr.dic','rb'))
+veltheta = pickle.load(open('./'+datadir+'/veltheta.dic','rb'))
+velphi   = pickle.load(open('./'+datadir+    '/velz.dic','rb'))
+rho      = pickle.load(open('./'+datadir+     '/rho.dic','rb'))
+
+#Define number of points in the star we have
+numpoints = shape(velr[rotrates[0]])[1]
+points    = range(numpoints) #Do ALL points, there is no memory problem since we save a dictionary for every radius
+
+rround = np.round(rr,9) #Round the radius to nearest 9th decimal, so we can get a reliable unique count
+rruniq = np.unique(rround) #Obtain the unique values of radius
+
+#Define dt for each rotation case
+dt = {}
+for rot in rotrates:
+	dt[rot] = 0.1*1e-3 #0.1 milliseconds
+
+#Initialize some dictionaries for holding parameters for spectrogram function
+Nperseg  = {} #Number of points over which window is non-zero
+Noverlap = {} #Number of points successive windows overlap
+Nfft     = {} #Number of points to perform FFT over (>= Nperseg, if greater then it is equivalent to sinc interpolation (no extra "real" resolution))
+
+#Define parameters for spectrogram function
+for r in rotrates:
+	Nperseg[r]  = int(WindowWidth*1e-3/dt[r])
+	Noverlap[r] = Nperseg[r]-1
+	Nfft[r]     = None
+
+### Big loop over radii, essentially running the entire spectrogram computation code over and over for different radii
+
+for r_i in range(len(rruniq)):
+
+	print 'Compute spectrograms for radius number ', r_i, ' of ', len(rruniq)
+
+	r_addy = where(rround==rruniq[r_i])[0] #Find all point addresses for equal unique radii
+
+	theta_argsort = np.argsort(theta[r_addy]) #Among those points, get addresses which, if laid in sequence, would yield values of theta in ascending order.
+						  #This step may be unnecessary, since theta[r_addy] may already be sorted. But we do it just in case.
+
+	points = np.argsort(theta[r_addy])
+
+	#Compute spectrograms
+	specf      = {}
+	spect      = {}
+
+	velrspec       = {}
+	velthetaspec   = {}
+	velphispec     = {}
+	#rhospec        = {}
+	
+	for r in rotrates:
+
+		velrspec[r]     = {}
+		velthetaspec[r] = {}
+		velphispec[r]   = {}
+		#rhospec[r]      = {}
+	
+	for r in rotrates:
+
+		#Pull velocity and rho data for the points addressed by r_addy only.
+		velr2     =     velr[r][:,r_addy]
+		veltheta2 = veltheta[r][:,r_addy]
+		velphi2   =   velphi[r][:,r_addy]
+		#rho2      =      rho[r][:,r_addy]
+
+		for p in points:
+			
+			specf[r], spect[r],     velrspec[r][p] = spectrogram(    velr2[:,p],1/dt[r],window=(Window),nperseg=Nperseg[r],noverlap=Noverlap[r],nfft=Nfft[r],scaling=Scaling, mode=Mode)
+			specf[r], spect[r], velthetaspec[r][p] = spectrogram(veltheta2[:,p],1/dt[r],window=(Window),nperseg=Nperseg[r],noverlap=Noverlap[r],nfft=Nfft[r],scaling=Scaling, mode=Mode)
+			#specf[r], spect[r],      rhospec[r][p] = spectrogram(     rho2[:,p],1/dt[r],window=(Window),nperseg=Nperseg[r],noverlap=Noverlap[r],nfft=Nfft[r],scaling=Scaling, mode=Mode)
+			if r!='0.0': #Do not compute for vphi if it's non-rotating case, since it's all zeros.
+				specf[r], spect[r], velphispec[r][p] = spectrogram(  velphi2[:,p],1/dt[r],window=(Window),nperseg=Nperseg[r],noverlap=Noverlap[r],nfft=Nfft[r],scaling=Scaling, mode=Mode)
+			'''
+			specf[r], spect[r],     velrspec[r][p] = stft(    velr2[:,p],1/dt[r],window=(Window),nperseg=Nperseg[r],noverlap=Noverlap[r],nfft=Nfft[r])
+			specf[r], spect[r], velthetaspec[r][p] = stft(veltheta2[:,p],1/dt[r],window=(Window),nperseg=Nperseg[r],noverlap=Noverlap[r],nfft=Nfft[r])
+			#specf[r], spect[r],      rhospec[r][p] = spectrogram(     rho2[:,p],1/dt[r],window=(Window),nperseg=Nperseg[r],noverlap=Noverlap[r],nfft=Nfft[r],scaling=Scaling, mode=Mode)
+			if r!='0.0': #Do not compute for vphi if it's non-rotating case, since it's all zeros.
+				specf[r], spect[r], velphispec[r][p] = stft(  velphi2[:,p],1/dt[r],window=(Window),nperseg=Nperseg[r],noverlap=Noverlap[r],nfft=Nfft[r])
+			'''
+	#Cut out a chunk of large frequencies, to save hard drive space ### ACTUALLY can't do this, because this messes up the istft later.
+	'''
+	for r in rotrates:
+
+		upper_f_limit_address = amin(where(specf[r]>2e3)[0])
+
+		specf[r] = specf[r][:upper_f_limit_address]
+
+		for p in points:
+			velrspec[r][p]     =     velrspec[r][p][:upper_f_limit_address,:]
+			velthetaspec[r][p] = velthetaspec[r][p][:upper_f_limit_address,:]
+			rhospec[r][p]      =      rhospec[r][p][:upper_f_limit_address,:]
+
+			if r!='0.0':
+				velphispec[r][p]   =   velphispec[r][p][:upper_f_limit_address,:]
+	'''			
+
+	#Shift times so that bounce time = 0
+	for r in rotrates:
+
+		spect[r] = spect[r] - spect[r].min() + (t[r][0] + Noverlap[r]*dt[r]/2.)
+
+	#		                            ^ brings min to 0        ^ brings min to the min of original times, but only to within half the overlap time (since missing that chunk).
+
+
+	for r in rotrates:
+
+		pickle.dump(    velrspec[r],open(    './'+datadir+'/velrspec_'+Mode+'_rot'+r+'_r'+str(r_i)+'.dic','wb'))
+		pickle.dump(velthetaspec[r],open('./'+datadir+'/velthetaspec_'+Mode+'_rot'+r+'_r'+str(r_i)+'.dic','wb'))
+		#pickle.dump(     rhospec[r],open(     'rhospec_'+Mode+'_rot'+r+'_r'+str(r_i)+'.dic','wb'))
+
+		if r!='0.0':
+			pickle.dump(  velphispec[r],open(  './'+datadir+'/velphispec_'+Mode+'_rot'+r+'_r'+str(r_i)+'.dic','wb'))
+
+pickle.dump(specf,open('./'+datadir+'/specf_'+Mode+'.dic','wb'))
+pickle.dump(spect,open('./'+datadir+'/spect_'+Mode+'.dic','wb'))
+
