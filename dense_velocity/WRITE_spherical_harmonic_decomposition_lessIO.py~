@@ -1,0 +1,290 @@
+from numpy import *
+from matplotlib import *
+import numpy
+from scipy.special import sph_harm
+from scipy.interpolate import SmoothBivariateSpline
+
+execfile('./pars_velocity.py')
+
+rr       = pickle.load(open(            'rr.dic','rb'))*1e-5 #Convert to km
+theta    = pickle.load(open(         'theta.dic','rb'))
+
+rr       = np.round(rr,9) #Round to 9 decimal places, so we can accurately count how many unique values there are
+theta    = np.round(theta,9)
+
+t        = pickle.load(open(    't_filtered.dic','rb')) #[rotrates_to_filter], chosen in parameter file
+
+masks    = pickle.load(open('velocity_spectrogram_masks.dic','rb')) #Just to get keys from
+
+dt = 0.1*1e-3 #time resolution for velocity field
+ti = 300 #time index to analyze
+r  = rotrate_to_decompose
+
+modes  = masks[r].keys() #Get mode keys
+#points = range(len(rr)) #Get point keys
+ru = np.unique(rr)
+tu = np.unique(theta)
+ra = range(len(ru))
+ta = range(len(tu))
+
+
+### Define vector spherical harmonic derivative w/ resp to theta
+
+def dsph_harm(l,theta): #(d/dtheta) Y_lm... We use phi=m=0 since we're in axisymmetry and it doesn't matter
+	m=0
+	return sqrt( (l-m)*(l+m+1) ) * sph_harm(m+1,l,0.,theta)
+
+
+
+### Setup dictionaries for repackaged velocity data, for feeding into splines later
+
+vrre  = {} #Repackaged velocity data, dictionaries
+vthre = {}
+vphre = {}
+
+
+### Setup dictionaries for 2D splines of the velocity field
+
+vrsp  = {} #Spline dictionaries, keys will be mode frequency names, then poloidal number l
+vthsp = {}
+vphsp = {}
+
+
+### Setup dictionaries of lists for the mode functions
+
+Er  = {} #Dictionaries to hold the radial coefficients
+Eth = {}
+Eph = {}
+
+for m in modes:
+
+	Er[m]  = {}
+	Eth[m] = {}
+	Eph[m] = {}
+
+	for l in poloidal_numbers:
+
+		Er[m][l]  = []
+		Eth[m][l] = []
+		Eph[m][l] = []
+
+
+### Perform decomposition
+
+for pr in ra: #Radii is the first loop, to minimize I/O
+
+	#Read in just three radii of data around the radius we're currently computing on this iteration of the master loop.
+	#2D splines will be created with this data.
+	if pr==ra[0]:
+
+		vr0  = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+		vr1  = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+		vr2  = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr+2)+'.dic','rb'))
+		vr3  = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr+3)+'.dic','rb'))
+		vr4  = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr+4)+'.dic','rb'))
+
+		vth0 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+		vth1 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+		vth2 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr+2)+'.dic','rb'))
+		vth3 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr+3)+'.dic','rb'))
+		vth4 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr+4)+'.dic','rb'))
+
+		if r!='0.0':
+			vph0 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+			vph1 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+			vph2 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr+2)+'.dic','rb'))
+			vph3 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr+3)+'.dic','rb'))
+			vph4 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr+4)+'.dic','rb'))
+
+		r0 = ru[pr  ]
+		r1 = ru[pr+1]
+		r2 = ru[pr+2]
+		r3 = ru[pr+3]
+		r4 = ru[pr+4]
+
+	elif pr==ra[1]:
+
+		vr0  = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+		vr1  = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+		vr2  = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+		vr3  = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr+2)+'.dic','rb'))
+		vr4  = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr+3)+'.dic','rb'))
+
+		vth0 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+		vth1 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+		vth2 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+		vth3 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr+2)+'.dic','rb'))
+		vth4 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr+3)+'.dic','rb'))
+
+		if r!='0.0':
+			vph0 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+			vph1 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+			vph2 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+			vph3 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr+2)+'.dic','rb'))
+			vph4 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr+3)+'.dic','rb'))
+
+		r0 = ru[pr-1]
+		r1 = ru[pr  ]
+		r2 = ru[pr+1]
+		r3 = ru[pr+2]
+		r4 = ru[pr+3]
+
+	elif pr==ra[-2]:
+		vr0 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr-3)+'.dic','rb'))
+		vr1 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr-2)+'.dic','rb'))
+		vr2 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+		vr3 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+		vr4 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+
+		vth0 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr-3)+'.dic','rb'))
+		vth1 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr-2)+'.dic','rb'))
+		vth2 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+		vth3 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+		vth4 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+
+		if r!='0.0':
+			vph0 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr-3)+'.dic','rb'))
+			vph1 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr-2)+'.dic','rb'))
+			vph2 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+			vph3 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+			vph4 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+
+		r0 = ru[pr-3]
+		r1 = ru[pr-2]
+		r2 = ru[pr-1]
+		r3 = ru[pr  ]
+		r4 = ru[pr+1]
+
+	elif pr==ra[-1]:
+		vr0 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr-4)+'.dic','rb'))
+		vr1 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr-3)+'.dic','rb'))
+		vr2 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr-2)+'.dic','rb'))
+		vr3 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+		vr4 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+
+		vth0 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr-4)+'.dic','rb'))
+		vth1 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr-3)+'.dic','rb'))
+		vth2 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr-2)+'.dic','rb'))
+		vth3 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+		vth4 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+
+		if r!='0.0':
+			vph0 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr-4)+'.dic','rb'))
+			vph1 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr-3)+'.dic','rb'))
+			vph2 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr-2)+'.dic','rb'))
+			vph3 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+			vph4 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+
+		r0 = ru[pr-4]
+		r1 = ru[pr-3]
+		r2 = ru[pr-2]
+		r3 = ru[pr-1]
+		r4 = ru[pr  ]
+
+	else:
+		vr0 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr-2)+'.dic','rb'))
+		vr1 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+		vr2 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+		vr3 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+		vr4 = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr+2)+'.dic','rb'))
+
+		vth0 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr-2)+'.dic','rb'))
+		vth1 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+		vth2 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+		vth3 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+		vth4 = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr+2)+'.dic','rb'))
+
+		if r!='0.0':
+			vph0 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr-2)+'.dic','rb'))
+			vph1 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr-1)+'.dic','rb'))
+			vph2 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr  )+'.dic','rb'))
+			vph3 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr+1)+'.dic','rb'))
+			vph4 = pickle.load(open('velph_filtered_rot'+r+'_r'+str(pr+2)+'.dic','rb'))
+
+		r0 = ru[pr-2]
+		r1 = ru[pr-1]
+		r2 = ru[pr  ]
+		r3 = ru[pr+1]
+		r4 = ru[pr+2]
+
+	for m in modes:
+
+		vrre[m]  = [] #Define a list for each mode
+		vthre[m] = []
+		vphre[m] = []
+
+		if m==modes[0]: #Only do this once... List of radii and thetas to go along with the lists of velr, velth, velphi
+			re = []
+			te = []
+		
+		for pt in ta: #Amalgamate velocity data into these lists, with their corresponding radii and thetas
+
+			vrre[m].append(  vr0[pt][m][ti])
+			vrre[m].append(  vr1[pt][m][ti])
+			vrre[m].append(  vr2[pt][m][ti])
+			vrre[m].append(  vr3[pt][m][ti])
+			vrre[m].append(  vr4[pt][m][ti])
+			vthre[m].append(vth0[pt][m][ti])
+			vthre[m].append(vth1[pt][m][ti])
+			vthre[m].append(vth2[pt][m][ti])
+			vthre[m].append(vth3[pt][m][ti])
+			vthre[m].append(vth4[pt][m][ti])
+			if r!='0.0':
+				vphre[m].append(vph0[pt][m][ti])
+				vphre[m].append(vph1[pt][m][ti])
+				vphre[m].append(vph2[pt][m][ti])
+				vphre[m].append(vph3[pt][m][ti])
+				vphre[m].append(vph4[pt][m][ti])
+
+			if m==modes[0]:
+				re.append(r0)
+				re.append(r1)
+				re.append(r2)
+				re.append(r3)
+				re.append(r4)
+				te.append(tu[pt])
+				te.append(tu[pt])
+				te.append(tu[pt])
+				te.append(tu[pt])
+				te.append(tu[pt])
+
+		#vrre[m]  = np.array( vrre[m]) #Turn lists into numpy arrays
+		#vthre[m] = np.array(vthre[m])
+		#if r!='0.0':
+		#	vphre[m] = np.array(vphre[m])
+
+		#if m==modes[0]:
+		#	re = np.array(re)
+		#	te = np.array(te)
+
+		#Now define splines with these new lists
+		vrsp[m]  = SmoothBivariateSpline(re,te, vrre[m],kx=1,ky=1)
+		vthsp[m] = SmoothBivariateSpline(re,te,vthre[m],kx=1,ky=1)
+		if r!='0.0':
+			vphsp[m] = SmoothBivariateSpline(re,te,vphre[m])
+
+		for l in poloidal_numbers:
+
+			rad = ru[pr] #Do only this radius here, governed by the master loop
+
+			#Integrate over solid angles assuming axisymmetry
+			Er[m][l].append(  2*pi * np.trapz(  vrsp[m](rad,tu) *  real(sph_harm(0,l,0.,tu)) * np.sin(tu), dx=tu[1]-tu[0] ) )
+
+			if l==0: #If l==0 need to do special case, otherwise dividing by 0
+				Eth[m][l].append(0.)
+				Eph[m][l].append(0.)
+			else:
+				Eth[m][l].append( ( 1./(l*(l+1.)) ) * 2*pi * np.trapz( vthsp[m](rad,tu) * real(dsph_harm(  l,   tu)) * np.sin(tu), dx=tu[1]-tu[0] ) )
+				if r!='0.0':
+					Eph[m][l].append( ( 1./(l*(l+1.)) ) * 2*pi * np.trapz( vphsp[m](rad,tu) * real(dsph_harm(  l,   tu)) * np.sin(tu), dx=tu[1]-tu[0] ) )
+
+
+### Now turn all those mode function lists into numpy arrays
+for m in modes:
+	for l in poloidal_numbers:
+		#Turn into numpy arrays
+		Er[m][l]  = np.array( Er[m][l])
+		Eth[m][l] = np.array(Eth[m][l])
+		if r!='0.0':
+			Eph[m][l] = np.array(Eph[m][l])
+

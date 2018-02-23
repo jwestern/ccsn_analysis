@@ -1,0 +1,199 @@
+from numpy import *
+from matplotlib import *
+import numpy
+from scipy.special import sph_harm
+from scipy.interpolate import SmoothBivariateSpline
+
+execfile('./pars_velocity.py')
+
+rr       = pickle.load(open(            'rr.dic','rb'))*1e-5 #Convert to km
+theta    = pickle.load(open(         'theta.dic','rb'))
+
+rr       = np.round(rr,9) #Round to 9 decimal places, so we can accurately count how many unique values there are
+theta    = np.round(theta,9)
+
+t        = pickle.load(open(       't_filtered.dic','rb')) #[rotrates_to_filter], chosen in parameter file
+
+masks    = pickle.load(open('velocity_spectrogram_masks.dic','rb')) #Just to get keys from
+
+dt = 0.1*1e-3 #time resolution for velocity field
+
+if test=='yes':
+	ti = 0 #time index to analyze
+	modes = ['test']
+else:
+	modes = ['750'] #masks[r].keys() #Get mode keys
+
+r  = rotrate_to_decompose
+
+#modes  = ['750'] #masks[r].keys() #Get mode keys
+#points = range(len(rr)) #Get point keys
+ru = np.unique(rr)
+tu = np.unique(theta)
+ra = range(len(ru))
+ta = range(len(tu))
+
+
+### Define vector spherical harmonic derivative w/ resp to theta
+
+def dsph_harm(l,theta): #(d/dtheta) Y_lm... We use phi=m=0 since we're in axisymmetry and it doesn't matter
+	m=0
+	return sqrt( (l-m)*(l+m+1) ) * sph_harm(m+1,l,0.,theta)
+
+
+### Read in all radii for this particular rotation rate
+
+vr  = {}
+vth = {}
+vph = {}
+
+for pr in ra:
+	if test=='yes':
+		vr[pr]  = {}
+		vth[pr] = {}
+		vph[pr] = {}
+
+		for pt in ta: #Make same dictionary structure as actual data
+			vr[pr][pt]  = {}
+			vth[pr][pt] = {}
+			vph[pr][pt] = {}
+
+			vr[pr][pt]['test']  = {}
+			vth[pr][pt]['test'] = {}
+			vph[pr][pt]['test'] = {}
+
+		rad   = ru[pr]
+
+		l_r   = 0 #poloidal numbers to excite
+		l_th  = 1
+		l_ph  = 1
+		xi_r  = np.sin(2*pi*rad/30.) #this is a trial radial mode function
+		xi_th = 1. #np.cos(2*pi*rad/20.) #this is a trial polodial mode function
+		xi_ph = 1. #np.cos(2*pi*rad/40.) #this is a trial azimuthal mode function
+
+		for pt in ta:
+
+			vr[pr]
+
+			thta = tu[pt]
+			vr[pr][pt]['test'][0]  = xi_r *real(sph_harm(0,l_r, 0.,thta))
+			vth[pr][pt]['test'][0] = xi_th*real(dsph_harm( l_th,   thta))
+			vph[pr][pt]['test'][0] = xi_ph*real(dsph_harm( l_ph,   thta))
+	else:
+
+		vr[pr]  = pickle.load(open( 'velr_filtered_rot'+r+'_r'+str(pr)+'.dic','rb'))
+		vth[pr] = pickle.load(open('velth_filtered_rot'+r+'_r'+str(pr)+'.dic','rb'))
+		if r!='0.0':
+			vph[pr] = pickle.load(open(  'velph_filtered_rot'+r+'_r'+str(pr)+'.dic','rb'))
+
+### Repackage velocity data, for feeding into splines
+
+vrre  = {} #Repackaged dictionaries
+vthre = {}
+vphre = {}
+
+for m in modes: #Loop over modes for this particular rotation case
+
+	vrre[m]  = [] #Define a list for each mode
+	vthre[m] = []
+	vphre[m] = []
+
+	if m==modes[0]: #Only do this once... List of radii and thetas to go along with the lists of velr, velth, velphi
+		re = []
+		te = []
+
+	for pr in ra: #Put each point's data into the lists
+		for pt in ta:
+
+			vrre[m].append(  vr[pr][pt][m][ti])
+			vthre[m].append(vth[pr][pt][m][ti])
+			if r!='0.0':
+				vphre[m].append(vph[pr][pt][m][ti])
+
+			if m==modes[0]:
+				re.append(ru[pr])
+				te.append(tu[pt])
+
+	vrre[m]  = np.array( vrre[m]) #Turn lists into numpy arrays
+	vthre[m] = np.array(vthre[m])
+	if r!='0.0':
+		vphre[m] = np.array(vphre[m])
+
+re = np.array(re)
+te = np.array(te)
+
+
+### Define 2d splines of velocity field
+
+vrsp  = {} #Spline dictionaries, keys will be mode frequency names
+vthsp = {}
+vphsp = {}
+
+for m in modes: #Loop over modes for this particular rotation case
+
+	vrsp[m]  = SmoothBivariateSpline(re*np.sin(te),re*np.cos(te), vrre[m],kx=1,ky=1)
+	vthsp[m] = SmoothBivariateSpline(re*np.sin(te),re*np.cos(te),vthre[m],kx=1,ky=1)
+	if r!='0.0':
+		vphsp[m] = SmoothBivariateSpline(re*np.sin(te),re*np.cos(te),vphre[m])
+
+### Perform decomposition
+
+Er  = {} #Dictionaries to hold the radial coefficients
+Eth = {}
+Eph = {}
+
+for m in modes:
+
+	Er[m]  = {}
+	Eth[m] = {}
+	Eph[m] = {}
+
+	for l in poloidal_numbers:
+
+		Er[m][l]  = []
+		Eth[m][l] = []
+		Eph[m][l] = []
+
+		for radi in ra:
+			rad=ru[radi]
+			#Integrate over solid angles assuming axisymmetry
+
+			vrintme = np.zeros(len(tu)) #Collect values along constant radius into an array
+			for thi in ta:
+				th = tu[thi] 
+				vrintme[thi] = vrsp[m](rad*np.sin(th),rad*np.cos(th))
+			#vrintme = np.array(vrintme)
+
+			Er[m][l].append(  2*pi * np.trapz(  vrintme *  real(sph_harm(0,l,0.,tu)) * np.sin(tu), dx=tu[1]-tu[0] ) )
+
+			if l==0: #If l==0 need to do special case, otherwise dividing by 0
+				Eth[m][l].append(0.)
+				Eph[m][l].append(0.)
+			else:
+
+				vthintme = np.zeros(len(tu)) #Collect values along constant radius into an array
+				for thi in ta:
+					th = tu[thi]
+					vthintme[thi] = vthsp[m](rad*np.sin(th),rad*np.cos(th))
+				#vthintme = np.array(vthintme)
+
+				Eth[m][l].append( ( 1./(l*(l+1.)) ) * 2*pi * np.trapz( vthintme * real(dsph_harm(  l,   tu)) * np.sin(tu), dx=tu[1]-tu[0] ) )
+				if r!='0.0':
+					vphintme = np.zeros(len(tu)) #Collect values along constant radius into a list
+					for thi in ta:
+						th = tu[thi]
+						vphintme[thi] = vphsp[m](rad*np.sin(th),rad*np.cos(th))
+					#vphintme = np.array(vphintme)
+
+					Eph[m][l].append( ( 1./(l*(l+1.)) ) * 2*pi * np.trapz( vphintme * real(dsph_harm(  l,   tu)) * np.sin(tu), dx=tu[1]-tu[0] ) )
+
+		#Turn into numpy arrays
+		Er[m][l]  = np.array( Er[m][l])
+		Eth[m][l] = np.array(Eth[m][l])
+		if r!='0.0':
+			Eph[m][l] = np.array(Eph[m][l])
+
+pickle.dump(Er, open( 'vr_sph_harm_coeffs_rot'+r+'.dic','wb'))
+pickle.dump(Eth,open('vth_sph_harm_coeffs_rot'+r+'.dic','wb'))
+if r!='0.0':
+	pickle.dump(Eph,open('vph_sph_harm_coeffs_rot'+r+'.dic','wb'))

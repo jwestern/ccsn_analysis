@@ -1,0 +1,105 @@
+from numpy import *
+from matplotlib import *
+
+execfile('./pars_velocity.py')
+#execfile('./compute_spectrograms2.py')
+
+rr           = pickle.load(open(           'rr.dic','rb'))*1e-5 #Convert to km
+theta        = pickle.load(open(        'theta.dic','rb'))
+
+specf        = pickle.load(open(    'specf_complex.dic','rb'))
+spect        = pickle.load(open(    'spect_complex.dic','rb'))
+
+#Get unique coordinate values
+ru = np.unique(np.round(   rr,9)) #Get unique vals of rr
+tu = np.unique(np.round(theta,9)) #Get unique vals of theta
+
+#Get addresses of only those which will be plotted
+ra1 = where(ru>minr)[0] #Address of radii greater than minr
+ra2 = where(ru<maxr)[0] #Address of raddi    less than maxr
+ra  = np.intersect1d(ra1,ra2) #Get the shared elements of ra1 & ra2, i.e. address of radii with minr < rr < maxr
+ra  = ra[::skipr] #Skip every skipr-th radius
+
+ta1 = where(tu>mintheta)[0] #Address of radii greater than minr
+ta2 = where(tu<maxtheta)[0] #Address of raddi    less than maxr
+ta  = np.intersect1d(ta1,ta2) #Get the shared elements of ra1 & ra2, i.e. address of radii with minr < rr < maxr
+ta  = ta[::skipt] #Skip every skipt-th radius
+
+#velrspec     = pickle.load(open(     'velrspec_complex.dic','rb'))
+#velthetaspec = pickle.load(open( 'velthetaspec_complex.dic','rb'))
+
+share_colorscale = 'no'
+
+numpoints = len(ra) * len(ta)
+
+
+numcols  = len(ta) #Columns are different angles
+numrows  = len(ra) #   Rows are different radii
+numplots = numcols*numrows
+
+
+rcParams['axes.labelsize']=13.0
+
+
+fig = plt.figure()
+fig.subplots_adjust(bottom=0.15)
+fig.subplots_adjust(hspace=0.25)
+fig.subplots_adjust(  left=0.15)
+ax={}
+for nc in range(1,numcols+1):
+	ax[nc]={}
+	for nr in range(1,numrows+1):
+		ax[nc][nr] = fig.add_subplot(numrows,numcols,(nr-1)*numcols                                              +nc)
+#						                           ^^^ how many times to add a whole row (start with 0 times)   ^the column in the given row
+
+Cmap='jet'
+
+upper_freq_limit = 1.75e3 #in Hz... Largest frequency to plot in the spectrograms
+
+
+#Get address for lower and upper limits of frequency that are to be plotted
+
+lf_lim = 2
+uf_lim = amin( where(specf[plotr]>upper_freq_limit) )+1
+
+
+#Get address of the bounce time
+
+bouncet = abs( spect[plotr] ).argmin()
+
+
+#Get address of fraction of a window prior to bounce time
+
+thatfraction   = 0.4
+
+prebouncet     = abs( spect[plotr]+thatfraction*WindowWidth*1e-3 ).argmin()
+
+
+#Now make plots
+for nr in range(1,numrows+1):
+
+	rac  = ra[nr-1] #radius address currently
+	ruc  = ru[rac]  #radius value currently (in km)
+
+	spec = pickle.load(open(plotv+'spec_complex_rot'+plotr+'_r'+str(rac)+'.dic','rb'))
+
+	for nc in range(1,numcols+1):
+		
+		tac = ta[nc-1] #theta address currently
+		tuc = tu[tac]  #theta value currently (in radians)
+
+		Title = r'$\theta =$'+"{:.2f}".format(tuc)+' '+r'$r =$'+"{:.1f}".format(ruc)
+		ax[nc][nr].grid()
+
+		ax[nc][nr].contourf(( spect[plotr][prebouncet:])*1e3, specf[plotr][lf_lim:uf_lim], log10(abs( spec[tac][lf_lim:uf_lim,prebouncet:]**2. )), 80, cmap=Cmap )
+
+		if mod(nc-1,numcols)==0:
+			ax[nc][nr].set_ylabel(r'$f$ (Hz)')
+		if nr==numrows:
+			ax[nc][nr].set_xlabel(r'$t-t_\mathrm{bounce}$ (ms)')
+
+		ax[nc][nr].set_title(Title,size=13)
+
+Suptitle = r'$\omega_{initial} = '+plotr+'$ (rad/s), '+titlev
+fig.suptitle(Suptitle)
+
